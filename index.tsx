@@ -153,6 +153,7 @@ const App = () => {
 
   const [finalUrl, setFinalUrl] = useState("");
   const [jsonParams, setJsonParams] = useState("{}");
+  const [isDownloading, setIsDownloading] = useState(false);
 
   // Builder Logic
   useEffect(() => {
@@ -160,25 +161,36 @@ const App = () => {
     const paramsObj = {};
 
     const add = (k, v) => {
-        params.set(k, v);
-        paramsObj[k] = v;
+        if (!v) return;
+        const cleanV = v.toString().trim();
+        if (!cleanV) return;
+        params.set(k, cleanV);
+        paramsObj[k] = cleanV;
     };
 
     // 1. Core
-    if (count) add("count", count);
+    add("count", count);
     if (shuffle === "true") add("shuffle", "true");
     if (unique === "true") add("unique", "true");
 
     // 2. Source
     if (sourceMode === "mylinks") {
+      // Ensure myLinkUrl is cleaned
+      const cleanLink = myLinkUrl.trim();
       let val = "onfile";
-      if (onFileSkip || onFileTake) {
-        val += `-${onFileSkip || 0}-${onFileTake || ''}`;
+      
+      const skip = onFileSkip ? onFileSkip.trim() : "";
+      const take = onFileTake ? onFileTake.trim() : "";
+
+      if (skip || take) {
+        // onfile-SKIP-TAKE-URL
+        val += `-${skip || 0}-${take || ''}-${cleanLink}`;
       } else {
-        val += "-";
+        // onfile-URL
+        val += `-${cleanLink}`;
       }
-      val += myLinkUrl;
-      add("mylinks", val);
+      
+      if (cleanLink) add("mylinks", val);
     } else if (sourceMode === "country") {
       add("list", listVal || "all");
     } else {
@@ -187,41 +199,41 @@ const App = () => {
 
     // 3. IP
     if (ipMode === "manual") {
-      if (ipVal) add("ip", ipVal);
+      add("ip", ipVal);
     } else if (ipMode === "range") {
       add("ip", ipRangeVal ? `range/${ipRangeVal}` : "range");
     } else if (ipMode === "host") {
       add("ip", "host");
     } else if (ipMode === "file") {
-      if (ipVal) add("ip", ipVal);
+      add("ip", ipVal);
     }
     
-    if (ipCount) add("ipcount", ipCount);
-    if (ipNot) add("ipnot", ipNot);
+    add("ipcount", ipCount);
+    add("ipnot", ipNot);
 
     // 4. Filters & Tech
     if (selectedTypes.length > 0) add("type", selectedTypes.join(","));
     if (selectedProtocols.length > 0) add("protocol", selectedProtocols.join(","));
-    if (operator) add("operator", operator);
-    if (locationFilter) add("locations", locationFilter);
-    if (only) add("only", only);
+    add("operator", operator);
+    add("locations", locationFilter);
+    add("only", only);
 
     // 5. Advanced
-    if (sni) add("sni", sni);
-    if (port) add("port", port);
-    if (address) add("address", address);
-    if (streamSecurity) add("streamsecurity", streamSecurity);
+    add("sni", sni);
+    add("port", port);
+    add("address", address);
+    add("streamsecurity", streamSecurity);
 
     // 6. Output
     if (target && target !== 'hiddify') {
         add("target", target);
     }
     
-    if (configUrl) add("config", configUrl);
+    add("config", configUrl);
 
     // Construct
     const qs = params.toString();
-    const cleanBase = baseUrl.replace(/\/+$/, "");
+    const cleanBase = baseUrl.trim().replace(/\/+$/, "");
     setFinalUrl(qs ? `${cleanBase}/?${qs}` : cleanBase);
     setJsonParams(JSON.stringify(paramsObj, null, 2));
 
@@ -241,22 +253,43 @@ const App = () => {
   };
 
   const openLink = () => {
+    if (!finalUrl) return;
+    
     if (target === 'hiddify') {
-        const hiddifyLink = `hiddify://import/${finalUrl}#V2.AliCivil-${operator || 'Config'}`;
+        // Hiddify needs the URL to Import
+        const hiddifyLink = `hiddify://import/${encodeURIComponent(finalUrl)}#V2.AliCivil-${operator || 'Config'}`;
         window.location.href = hiddifyLink;
     } else {
+        // Browser needs to open the URL to show content
         window.open(finalUrl, "_blank");
     }
   };
 
-  const downloadTxt = () => {
-    const element = document.createElement("a");
-    const file = new Blob([finalUrl], {type: 'text/plain'});
-    element.href = URL.createObjectURL(file);
-    element.download = "config.txt";
-    document.body.appendChild(element); 
-    element.click();
-    document.body.removeChild(element);
+  const downloadTxt = async () => {
+    if (!finalUrl) return;
+    setIsDownloading(true);
+    try {
+      // Step 1: Fetch the content from the generated URL
+      const response = await fetch(finalUrl);
+      if (!response.ok) {
+        throw new Error(`HTTP error! status: ${response.status}`);
+      }
+      const text = await response.text();
+
+      // Step 2: Create a blob from the CONTENT
+      const element = document.createElement("a");
+      const file = new Blob([text], {type: 'text/plain;charset=utf-8'});
+      element.href = URL.createObjectURL(file);
+      element.download = "config.txt";
+      document.body.appendChild(element); 
+      element.click();
+      document.body.removeChild(element);
+    } catch (e) {
+      alert("خطا در دانلود کانفیگ:\n" + e.message + "\n\nممکن است آدرس ورکر یا لینک شما مشکل داشته باشد.");
+      console.error(e);
+    } finally {
+      setIsDownloading(false);
+    }
   };
 
   const reset = () => {
@@ -270,6 +303,7 @@ const App = () => {
     setSelectedTypes([]);
     setSelectedProtocols([]);
     setTarget("");
+    setMyLinkUrl("");
   };
 
   return (
@@ -448,8 +482,13 @@ const App = () => {
                 <button className="secondary" onClick={openLink}>
                     {target === 'hiddify' ? 'افزودن به هیدیفای' : 'باز کردن / تست'}
                 </button>
-                <button className="secondary" onClick={downloadTxt}>
-                    دانلود فایل (TXT)
+                <button 
+                  className="secondary" 
+                  onClick={downloadTxt} 
+                  disabled={isDownloading} 
+                  style={{opacity: isDownloading ? 0.7 : 1}}
+                >
+                    {isDownloading ? 'در حال دانلود...' : 'دانلود فایل (TXT)'}
                 </button>
                 <button className="secondary danger" onClick={reset}>ریست تنظیمات</button>
             </div>
